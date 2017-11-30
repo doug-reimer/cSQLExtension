@@ -562,12 +562,17 @@ function Add-cSQLLinkedServerLogin
         [Parameter(Mandatory = $false)]
         [ValidateNotNullOrEmpty()]
         [System.Management.Automation.PSCredential]
-        $RemoteLogin,
+        $RemoteUser,
 
         [Parameter(Mandatory = $false)]
         [ValidateNotNullOrEmpty()]
         [System.Boolean]
-        $Impersonate
+        $Impersonate,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateNotNullOrEmpty()]
+        [System.String]
+        $Name
 
     )
 
@@ -584,12 +589,414 @@ function Add-cSQLLinkedServerLogin
         $sqlLinkedLogin.Impersonate = $False
     }
 
-    if ($RemoteLogin) 
+    if ($Name)
+    {
+        Write-Verbose -Message "Setting Name"
+        $sqlLinkedLogin.Name = $Name
+    }
+
+    if ($RemoteUser) 
     {
         Write-Verbose -Message "Setting Remote Username and Password"
-        $sqlLinkedLogin.RemoteUser = $RemoteLogin.UserName
-        $sqlLinkedLogin.SetRemotePassword($RemoteLogin.Password)
+        $sqlLinkedLogin.RemoteUser = $RemoteUser.UserName
+        $sqlLinkedLogin.SetRemotePassword($RemoteUser.Password)
     }
 
     $sqlLinkedLogin.Create()
+}
+
+
+Function Get-cSQLAgentJob {
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [System.Object]
+        $SqlServerObject,
+
+        [Parameter(Mandatory = $false)]
+        [String]$Name
+    )
+    
+    $sql_job_server = $SqlServerObject.JobServer | where {$_.Name -eq $SqlServerObject.Name}
+
+    if ($Name) {
+        return $sql_job_server.Jobs[$Name]
+    } else {
+        return $sql_job_server.Jobs
+    }
+    
+}
+
+Function New-cSQLAgentJob {
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [System.Object]
+        $SqlServerObject,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [String]$Name,
+
+        [Parameter(Mandatory = $false)]
+        [String]$OwnerLoginName,
+
+        [boolean]$Enabled = $true,
+
+        [Parameter(Mandatory = $false)]
+        [int]$CategoryId = 0,
+
+        [Parameter(Mandatory = $false)]
+        [String]$Description
+    )
+
+    $sql_job = New-Object Microsoft.SqlServer.Management.Smo.Agent.Job -ArgumentList $SqlServerObject.JobServer, $Name, $CategoryId
+    $sql_job.IsEnabled = $Enabled
+    
+    if ($Description) {
+        $sql_job.Description = $Description
+    }
+
+    if ($OwnerLoginName) {
+        $sql_job.OwnerLoginName = $OwnerLoginName
+    }
+    
+    Write-Verbose -Message "Creating SQL Agent Job: $Name"
+    $sql_job.Create()
+    $sql_job.ApplyToTargetServer($SqlServerObject.DomainInstanceName)
+
+}
+
+Function Remove-cSQLAgentJob {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [System.Object]
+        $SqlServerObject,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [String]$Name
+    )
+
+    $sql_job_server = $SqlServerObject.JobServer | Where {$_.Name -eq $SqlServerObject.Name}
+    $sql_job = $sql_job_server.Jobs[$Name]
+    
+    if ($sql_job) {
+        Write-Verbose -Message "Dropping SQL Agent Job: $($sql_job.Name)"
+        $sql_job.DropIfExists()
+    } else {
+        Write-Verbose -Message "SQL Agent Job not found: $Name"
+    }
+    
+}
+
+Function Set-cSQLAgentJob {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [System.Object]
+        $SqlServerObject,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [String]$Name,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [String]$PropertyName,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        $PropertyValue
+    )
+
+    $sql_job_server = $SqlServerObject.JobServer | Where {$_.Name -eq $SqlServerObject.Name}
+    $sql_job = $sql_job_server.Jobs[$Name]
+    
+    if ($sql_job) {
+        Write-Verbose -Message "Setting property: $PropertyName to: $PropertyValue"
+        $sql_job.$PropertyName = $PropertyValue
+        $sql_job.Alter()
+    } else {
+        Write-Verbose -Message "SQL Agent Job not found: $Name"
+    }
+}
+
+Function Get-cSQLAgentJobStep {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [System.Object]
+        $SqlServerAgentJob,
+
+        [Parameter(Mandatory = $false)]
+        [String]$Name
+    )
+
+    if ($Name) {
+        return $sqlServerAgentJob.JobSteps | Where {$_.Name -eq $Name}
+    } else {
+        return $sqlServerAgentJob.JobSteps
+    }
+}
+
+Function Add-cSQLAgentJobStep {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [System.Object]
+        $SqlServerAgentJob,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [String]$Name,
+
+        # https://technet.microsoft.com/en-us/library/microsoft.sqlserver.management.smo.agent.agentsubsystem(v=sql.105).aspx
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [ValidateSet('TransactSql','CmdExec','Powershell')]
+        [String]$Type,
+
+        [Parameter(Mandatory = $false)]
+        [String]$Database,
+
+        [Parameter(Mandatory = $false)]
+        [String]$Command
+    )
+
+    $job_step = New-Object Microsoft.SqlServer.Management.Smo.Agent.JobStep -ArgumentList $SqlServerAgentJob, $Name
+    $job_step.Subsystem = $Type
+
+    if ($Command) {
+        $job_step.Command = $Command
+    }
+
+    if ($Type -eq "TransactSql" -and $Database) {
+        $job_step.DatabaseName = $Database
+    }
+
+    $job_step.Create()
+    
+}
+
+Function Remove-cSQLAgentJobStep {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [System.Object]
+        $SqlServerAgentJobStep
+    )
+
+    Write-Verbose -Message "Dropping SQL Agent Job Step: $($SqlServerAgentJobStep.Name)"
+    $SqlServerAgentJobStep.DropIfExists()
+}
+
+
+Function Get-cSQLAgentJobSchedule {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Object]
+        $SqlServerAgentJob,
+
+        [Parameter(Mandatory = $false)]
+        [String]$Name
+    )
+
+    if ($Name) {
+        return $sqlServerAgentJob.JobSchedules | Where {$_.Name -eq $Name}
+    } else {
+        return $sqlServerAgentJob.JobSchedules
+    }
+}
+
+Function Add-cSQLAgentJobSchedule {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Object]
+        $SqlServerAgentJob,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [String]$Name,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Daily","Weekly","Monthly")]
+        [String]$FrequencyType,
+
+        [Parameter(Mandatory = $false)]
+        [Boolean]$Enabled = $true,
+
+        [Parameter(Mandatory = $true)]
+        [DateTime]$StartTime
+    )
+
+    $sql_job_schedule = New-Object Microsoft.SqlServer.Management.Smo.Agent.JobSchedule -ArgumentList $SqlServerAgentJob, $Name
+
+    $sql_job_schedule.FrequencyTypes = $FrequencyType
+    $sql_job_schedule.IsEnabled = $Enabled
+    $sql_job_schedule.ActiveStartTimeOfDay  = [TimeSpan]"$($StartTime.Hour):$($StartTime.Minute):$($StartTime.Second)"
+    $sql_job_schedule.ActiveStartDate = $StartTime
+    $sql_job_schedule.FrequencyInterval = 1
+
+    Write-Verbose -Message "Creating SQL Agent Job Schedule"
+    Write-Verbose -Message "FrequencyType: $FrequencyType"
+    $sql_job_schedule.Create()
+}
+
+Function Remove-cSQLAgentJobSchedule {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [System.Object]
+        $SqlServerAgentJobSchedule
+    )
+
+    Write-Verbose -Message "Dropping SQL Agent Job Schedule: $($SqlServerAgentJobSchedule.Name)"
+    $SqlServerAgentJobSchedule.DropIfExists()
+}
+
+
+Function Get-cSQLCredential {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Object]
+        $SqlServerObject,
+
+        [Parameter(Mandatory = $false)]
+        [String]$Name
+    )
+
+    if ($Name) {
+        return $SqlServerObject.Credentials | Where {$_.Name -eq $Name}
+    } else {
+        return $SqlServerObject.Credentials
+    }
+}
+
+Function Add-cSQLCredential {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Object]
+        $SqlServerObject,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateNotNullOrEmpty()]
+        [String]$Name,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [pscredential]$Credential
+    )
+
+    if (-not $Name) {
+        $Name = $Credential.Username
+    }
+    $sql_cred = New-Object Microsoft.SqlServer.Management.Smo.Credential -ArgumentList $sqlServerObject, $Name
+
+    Write-Verbose -message "Creating SQL Credential for idenity: $($Credential.Username)"
+    $sql_cred.Create($Credential.Username, $Credential.Password)
+}
+
+Function Remove-cSQLCredential {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Object]
+        $SqlServerCredential
+    )
+    Write-Verbose -Message "Dropping SQL Credential: $($SqlServerCredential.Name)"
+    $SqlServerCredential.DropIfExists()
+}
+
+
+Function Get-cSQLProxyAccount {
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [System.Object]
+        $SqlServerObject,
+
+        [Parameter(Mandatory = $false)]
+        [String]$Name
+    )
+    
+    $sql_job_server = $SqlServerObject.JobServer | where {$_.Name -eq $SqlServerObject.Name}
+
+    if ($Name) {
+        return $sql_job_server.ProxyAccounts | where {$_.Name -eq $Name}
+    } else {
+        return $sql_job_server.ProxyAccounts
+    }
+}
+
+Function Add-cSQLProxyAccount {
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [System.Object]
+        $SqlServerObject,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [String]$Name,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [String]$CredentialName,
+
+        [Parameter(Mandatory = $false)]
+        [String]$Description,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Powershell", "CmdExec")]
+        [String[]]$Subsystem
+    )
+
+    $sql_job_server = $SqlServerObject.JobServer | Where {$_.Name -eq $SqlServerObject.Name}
+
+    $sql_proxy_account = New-Object Microsoft.SqlServer.Management.Smo.Agent.ProxyAccount -ArgumentList $sql_job_server, $Name
+
+    $sql_proxy_account.CredentialName = $CredentialName
+    if ($Description) {
+        $sql_proxy_account.Description = $Description
+    }
+
+    Write-Verbose -Message "Creating Proxy Account: $Name"
+    $sql_proxy_account.Create()
+
+    foreach ($subsys in $Subsystem) {
+        Write-Verbose -Message "Adding Subsystem: $subsys"
+        $sql_proxy_account.AddSubsystem($subsys)
+    }
+ 
+}
+
+Function Remove-cSQLProxyAccount {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Object]
+        $SqlServerProxyAccount
+    )
+    Write-Verbose -Message "Dropping SQL Credential: $($SqlServerProxyAccount.Name)"
+    $SqlServerProxyAccount.DropIfExists()
 }
