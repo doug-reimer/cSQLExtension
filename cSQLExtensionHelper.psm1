@@ -1000,3 +1000,65 @@ Function Remove-cSQLProxyAccount {
     Write-Verbose -Message "Dropping SQL Credential: $($SqlServerProxyAccount.Name)"
     $SqlServerProxyAccount.DropIfExists()
 }
+
+
+Function Get-cSQLProvider {
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [System.Object]
+        $SqlServerObject,
+
+        [Parameter(Mandatory = $false)]
+        [String]$ProviderName
+    )
+
+    $sql_providers = $SqlServerObject.Settings.OleDbProviderSettings
+
+    if ($ProviderName) {
+        $sql_providers = $sql_providers | where {$_.Name -eq $ProviderName}
+    }
+
+    return $sql_providers 
+
+}
+
+Function Set-cSQLProviderOption {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [System.Object]
+        $SqlServerObject,
+
+        [Parameter(Mandatory = $true)]
+        [String]$ProviderName,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet(
+            'AllowInProcess',
+            'DisallowAdHocAccess',
+            'DynamicParameters',
+            'IndexAsAccessPath',
+            'LevelZeroOnly',
+            'NestedQueries',
+            'NonTransactedUpdates',
+            'SqlServerLike'
+        )]
+        [String]$OptionName,
+
+        [Parameter(Mandatory = $true)]
+        [Boolean]$Enabled
+    )
+
+    $sql_provider = $SqlServerObject.Settings.OleDbProviderSettings | Where {$_.Name -eq $ProviderName}
+
+    if ($sql_provider) {
+        $sql_provider.$OptionName = $Enabled
+        $sql_provider.Alter()
+    } else {
+        Write-Warning -Message "No SQL Provider found for: $ProviderName"
+    }
+}

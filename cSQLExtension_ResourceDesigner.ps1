@@ -121,10 +121,20 @@ New-xDscResource -Name cSQLAgentProxyAccount -Path $dsc_resource_path -Property 
 )
 
 
+New-xDscResource -Name cSQLProviderOption -Path $dsc_resource_path -Property @(
+    New-xDscResourceProperty -Name SQLServer -Description "The SQL Server" -Type String -Attribute Key
+    New-xDscResourceProperty -Name SQLInstanceName -Description "The SQL Instance" -Type String -Attribute Key
+    New-xDscResourceProperty -Name ProviderName -Description "The name of the SQL Provider" -Type String -Attribute Key
+    New-xDscResourceProperty -Name ProviderOption -Description "The name of the Provider Option" -Type String -Attribute Key -ValueMap "AllowInProcess","DisallowAdHocAccess","DynamicParameters","IndexAsAccessPath","LevelZeroOnly","NestedQueries","NonTransactedUpdates","SqlServerLike" -Values "AllowInProcess","DisallowAdHocAccess","DynamicParameters","IndexAsAccessPath","LevelZeroOnly","NestedQueries","NonTransactedUpdates","SqlServerLike"
+    New-xDscResourceProperty -Name Enabled -Description "If the provider option should be enabled or disabled." -Type Boolean -Attribute Write
+)
+
+
+
 New-ModuleManifest -Path $dsc_resource_path\cSQLExtension.psd1 `
     -Guid ([Guid]::NewGuid()) `
     -ModuleVersion 0.0.1 `
     -Author "Doug Reimer" `
-    -CompanyName "" `
+    -CompanyName "Enerplus" `
     -Description "SQL extension resource module" `
     -RootModule 'cSQLExtension.psm1'
